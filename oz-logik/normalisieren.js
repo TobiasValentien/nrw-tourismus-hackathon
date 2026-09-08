@@ -627,6 +627,39 @@ function auffaelligkeiten(woche) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Ist das die eigene Seite des Betriebs — oder nur ein Profil auf einer Plattform?
+ *
+ * Gemessen am 08.09.2026: von 718 Datensätzen mit Webseite führen **63** auf
+ * Facebook (38), Instagram (18), `g.co` (Google-Kurzlink) oder ein Fremdportal
+ * wie restaurantguru. Was dort steht, ist nicht die Auskunft des Betriebs,
+ * sondern die einer Plattform — teils aus demselben Datenpool, den wir gerade
+ * prüfen. Als zweite Quelle ist das wertlos und erzeugt nur Fehlalarme.
+ *
+ * Bewusst eine feste Liste statt einer Heuristik: eine Plattform erkennt man
+ * am Namen, nicht am Seitenaufbau. Neue Portale hier ergänzen.
+ */
+const FREMDE_PLATTFORMEN = [
+  'facebook.com', 'instagram.com', 'g.co', 'goo.gl',
+  'restaurantguru.com', 'tripadvisor.de', 'tripadvisor.com', 'yelp.de', 'yelp.com',
+  'opentable.de', 'speisekarte.de', 'lieferando.de', 'booking.com', 'hrs.de',
+  'expedia.de', 'trivago.de', 'tupalo.de', 'golocal.de', '11880.com',
+  'dasoertliche.de', 'gelbeseiten.de',
+];
+
+function istEigeneSeite(url) {
+  const s = String(url || '').trim();
+  if (!/^https?:\/\//i.test(s)) return false;
+  let host;
+  try {
+    host = new URL(s).hostname.toLowerCase().replace(/^www\./, '');
+  } catch (e) {
+    return false;
+  }
+  // Auch Subdomains treffen: "de-de.facebook.com", "m.facebook.com", "de.restaurantguru.com".
+  return !FREMDE_PLATTFORMEN.some((p) => host === p || host.endsWith('.' + p));
+}
+
+/**
  * Link auf den Eintrag im TeutoNavigator — so, wie ihn der Gast sieht.
  *
  * Wertvoller als ein Backend-Link: der Gastronom kann ihn öffnen, und in der
@@ -652,6 +685,7 @@ function oeffentlicherLink(datensatz, basis = 'https://www.teutonavigator.de/de/
 module.exports = {
   TAGE,
   oeffentlicherLink,
+  istEigeneSeite,
   pruefeEingabe,
   auffaelligkeiten,
   /** Leere Woche im Normalformat — für weitere Quellen (Webseite, Google). */

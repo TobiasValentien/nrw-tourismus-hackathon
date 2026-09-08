@@ -197,6 +197,14 @@ function setzeSpanne(tagObj, von, bis) {
     tagObj.iv = [[0, 1440]];
     return;
   }
+  // ⚠️ 23:59 ist Mitternacht, nicht "eine Minute vorher".
+  //    schema.org schreibt für "bis Mitternacht" üblicherweise closes="23:59",
+  //    destination.data speichert dieselbe Aussage als 00:00 des Folgetags
+  //    (= 1440). Ohne diesen Ausgleich meldet der Vergleich eine Minute als
+  //    Widerspruch — aufgefallen am 08.09.2026 an "Die Traube" (100011840):
+  //    Datenbank 17:00–00:00 (Folgetag) gegen Webseite 17:00–23:59.
+  //    Die KI-Strecke rechnet das schon so (fassungAusKi in baue-oz1-workflow.js).
+  if (bis === 1439) bis = 1440;
   N.ergaenze(tagObj, von, bis);
 }
 

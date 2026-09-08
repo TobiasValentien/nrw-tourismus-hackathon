@@ -156,7 +156,7 @@ for (const d of datensaetze) {
     weg = 'anfrage';
     varianteB = wocheAlsText(frei.woche);
     statistik.prio2_widerspruch++;
-  } else if (d.web && /^https?:\\/\\//i.test(d.web) && webKandidaten < MAX_WEBSEITEN) {
+  } else if (istEigeneSeite(d.web) && webKandidaten < MAX_WEBSEITEN) {
     // Struktur da, aber kein verwertbarer Freitext im Datensatz. Das sind die
     // rund 459 Fälle, die sich AUS SICH SELBST nicht prüfen lassen — für sie ist
     // die Betriebs-Webseite die einzige zweite Quelle.
@@ -216,7 +216,13 @@ for (const d of datensaetze) {
     // sondern von der Empfänger-Ermittlung weiter unten aus diesem Node gelesen.
     betrieb_email: String(d.email || '').trim(),
     // Für den Webseiten-Abruf im nächsten Node (Quelle C).
-    web: String(d.web || '').trim(),
+    // ⚠️ Nur die EIGENE Seite des Betriebs. Ein Facebook- oder Instagram-Profil,
+    //    ein Google-Kurzlink (g.co) oder ein Fremdportal wird hier ausgelassen:
+    //    von 718 Datensätzen mit Webseite betrifft das 63 (gemessen 08.09.2026).
+    //    Was dort steht, ist die Auskunft einer Plattform, nicht des Betriebs —
+    //    teils aus demselben Datenpool, den wir gerade prüfen. Ein leeres Feld
+    //    heißt für "Webseite holen": nicht abrufen.
+    web: istEigeneSeite(d.web) ? String(d.web).trim() : '',
     // Der Ad-hoc-Bearbeitungslink aus destination.data wird erst beim Versand
     // erzeugt (er läuft nach zwei Wochen ab) und geht NUR an Ersteller bzw.
     // letzten Bearbeiter — für den Gastronomen ist die Datenbank-Oberfläche zu viel.
@@ -775,6 +781,70 @@ return ergebnis;
 
 const CODE_KI = logik + '\n' + TREIBER_KI;
 
+// --- Firmenwebseite statt Filialseite ----------------------------------------
+const CODE_FIRMENSEITE = `
+// =============================================================================
+// Fälle aussortieren, die auf einer FIRMEN-Webseite beruhen statt auf der Seite
+// des einzelnen Betriebs.
+//
+// ⚠️ Warum es diesen Node gibt: Die Bäckerei Schmidt betreibt EINE Webseite für
+//    15 Filialen. Deren schema.org-Block nennt überall "Mo–So 09:00–17:00",
+//    während jede Filiale in destination.data eigene, plausible Zeiten hat.
+//    Ohne diese Prüfung erzeugt ein einziger Lauf 15 Fehlalarme (gemessen am
+//    08.09.2026 über alle 718 Datensätze ohne zweite Quelle im Datensatz —
+//    16 von 31 schema.org-Fällen waren Artefakte dieser Art).
+//
+//    Die geteilte Domain allein genügt NICHT als Ausschluss: mehrere Betriebe
+//    können unter einer Domain liegen und dort je eigene Zeiten pflegen.
+//    Verräterisch ist erst die IDENTISCHE Fassung über mehrere Betriebe — dann
+//    beschreibt die Quelle das Unternehmen, nicht den Betrieb.
+//
+//    Betroffen sind nur Fälle, die ERST DURCH die Webseite entstanden sind. Ein
+//    Freitext-Widerspruch bleibt stehen, auch wenn die Webseite als dritte
+//    Fassung dieselbe Firmenangabe liefert — der Fall steht aus eigenem Recht.
+// =============================================================================
+
+function domainVon(url) {
+  try { return new URL(String(url || '').trim()).hostname.toLowerCase().replace(/^www\\./, ''); }
+  catch (e) { return ''; }
+}
+
+// Ein Fall, der die Webseite als Grund nennt UND eine Fassung von dort hat.
+function istWebFall(f) {
+  return /Betriebs-Webseite/.test(String(f.grund || '')) && !!f.variante_c;
+}
+
+const alle = $input.all().map((i) => i.json);
+
+const gruppen = new Map();
+for (const f of alle) {
+  if (!istWebFall(f)) continue;
+  const d = domainVon(f.web);
+  if (!d) continue;
+  const schluessel = d + ' || ' + f.variante_c;
+  if (!gruppen.has(schluessel)) gruppen.set(schluessel, []);
+  gruppen.get(schluessel).push(String(f.datensatz_id));
+}
+
+const verworfen = new Set();
+const protokoll = [];
+for (const [schluessel, ids] of gruppen) {
+  if (ids.length < 2) continue;
+  for (const id of ids) verworfen.add(id);
+  protokoll.push(ids.length + '× ' + schluessel.split(' || ')[0]);
+}
+
+const statistik_firmenseite = { verworfen: verworfen.size, quellen: protokoll };
+
+const raus = [];
+for (const f of alle) {
+  if (istWebFall(f) && verworfen.has(String(f.datensatz_id))) continue;
+  raus.push({ json: { ...f, statistik_firmenseite } });
+}
+
+return raus;
+`;
+
 // --- Vorlauf: was schon in Arbeit ist ----------------------------------------
 // Muss VOR dem Abruf der Datensätze laufen, damit "Zeiten vergleichen" die
 // bestehenden Fälle kennt und offene nicht ein zweites Mal anfragt.
@@ -876,6 +946,14 @@ const KI_NODES = [
     typeVersion: 3.2,
     position: [1500, 20],
     parameters: { numberInputs: 3 },
+  },
+  {
+    id: 'firmenseite',
+    name: 'Firmenwebseiten aussortieren',
+    type: 'n8n-nodes-base.code',
+    typeVersion: 2,
+    position: [1660, 20],
+    parameters: { mode: 'runOnceForAllItems', jsCode: CODE_FIRMENSEITE },
   },
 ];
 
@@ -1054,7 +1132,27 @@ const istMail = (s) => /^[^@\\s]+@[^@\\s]+\\.[a-z]{2,}$/i.test(String(s || '').t
 // Math.random ist vorhersagbar. Da der Token der einzige Schutz des Fragebogens
 // ist, übernimmt das der nachfolgende Crypto-Node mit "generate / uuid".
 
-const faelle = $('Zeiten vergleichen').all().map((i) => i.json);
+// ⚠️ ZWINGEND der Node NACH der KI-Stufe, nicht "Zeiten vergleichen".
+//    Dort tragen die Fälle, die erst durch die Webseite entstehen, noch
+//    weg = 'web-pruefen'; auf 'anfrage' werden sie erst in "Webseite auswerten"
+//    bzw. "KI-Ergebnis prüfen" umgeschrieben. Wer hier zu früh liest, überspringt
+//    sie unten bei der Prüfung auf weg === 'anfrage' — sie landen in oz_faelle,
+//    bekommen aber KEINEN Zugang und KEINE Mail. Belegt am 08.09.2026: 85 Fälle mit
+//    weg = 'anfrage' in der Tabelle, aber nur 75 in oz_antworten — die Differenz
+//    von 10 waren genau die Webseiten-Fälle. Nach Fristablauf hätte OZ-3 sie auf
+//    "unbeantwortet" gesetzt und dauerhaft gesperrt, ohne dass je jemand gefragt
+//    worden wäre.
+const faelle = $('Firmenwebseiten aussortieren').all().map((i) => i.json);
+
+// betrieb_email wird nur in "Zeiten vergleichen" gesetzt und nicht in oz_faelle
+// gespeichert. Es läuft zwar über die Web-Nodes mit, aber darauf verlassen wir
+// uns nicht — hier eine Nachschlagetabelle als Rückfall.
+const mailNachId = new Map(
+  $('Zeiten vergleichen').all()
+    .map((i) => i.json)
+    .filter((f) => f && f.datensatz_id)
+    .map((f) => [String(f.datensatz_id), String(f.betrieb_email || '').trim()]),
+);
 const zustaendige = new Map(
   $('Zuständige lesen').all()
     .map((i) => i.json)
@@ -1071,7 +1169,8 @@ for (const fall of faelle) {
 
   const z = zustaendige.get(String(fall.datensatz_id)) || {};
   const empfaenger = [];
-  if (istMail(fall.betrieb_email)) empfaenger.push({ rolle: 'gastronom', email: fall.betrieb_email.trim() });
+  const betriebMail = String(fall.betrieb_email || mailNachId.get(String(fall.datensatz_id)) || '').trim();
+  if (istMail(betriebMail)) empfaenger.push({ rolle: 'gastronom', email: betriebMail });
   if (istMail(z.bearbeiter_email)) empfaenger.push({ rolle: 'bearbeiter', email: String(z.bearbeiter_email).trim() });
   if (istMail(z.ersteller_email) && String(z.ersteller_email).trim() !== String(z.bearbeiter_email || '').trim()) {
     empfaenger.push({ rolle: 'ersteller', email: String(z.ersteller_email).trim() });
@@ -1282,7 +1381,8 @@ Object.assign(workflow.connections, {
   'Ausgabeformat': {
     ai_outputParser: [[{ node: 'KI liest den Seitentext', type: 'ai_outputParser', index: 0 }]],
   },
-  'Fassungen zusammenführen': { main: [[{ node: 'Fall speichern', type: 'main', index: 0 }]] },
+  'Fassungen zusammenführen': { main: [[{ node: 'Firmenwebseiten aussortieren', type: 'main', index: 0 }]] },
+  'Firmenwebseiten aussortieren': { main: [[{ node: 'Fall speichern', type: 'main', index: 0 }]] },
   'Fall speichern': { main: [[{ node: 'Zuständige lesen', type: 'main', index: 0 }]] },
   'Zuständige lesen': { main: [[{ node: 'Empfänger bestimmen', type: 'main', index: 0 }]] },
   'Empfänger bestimmen': { main: [[{ node: 'Token erzeugen', type: 'main', index: 0 }]] },
@@ -1413,18 +1513,19 @@ const LAYOUT = {
   'Ausgabeformat': [1200, 160],
   'KI-Ergebnis prüfen': [1300, -60],
   'Fassungen zusammenführen': [1540, 60],
-  'Fall speichern': [1760, 60],
-  'Zuständige lesen': [1980, 60],
-  'Empfänger bestimmen': [2200, 60],
-  'Token erzeugen': [2420, 60],
-  'Mailtext bauen': [2640, 60],
-  'Zugang anlegen': [2860, 60],
-  'Anfrage senden': [3080, 60],
+  'Firmenwebseiten aussortieren': [1760, 60],
+  'Fall speichern': [1980, 60],
+  'Zuständige lesen': [2200, 60],
+  'Empfänger bestimmen': [2420, 60],
+  'Token erzeugen': [2640, 60],
+  'Mailtext bauen': [2860, 60],
+  'Zugang anlegen': [3080, 60],
+  'Anfrage senden': [3300, 60],
   'Doku: Worum es geht': [-960, -240],
   'Doku: Start': [-660, 330],
   'Doku: Daten holen': [-380, 330],
   'Doku: Herzstück': [100, 330],
-  'Doku: Speichern': [1700, 330],
+  'Doku: Speichern': [1920, 330],
 };
 for (const node of workflow.nodes) {
   if (LAYOUT[node.name]) node.position = LAYOUT[node.name];
