@@ -663,9 +663,23 @@ function istEigeneSeite(url) {
  * Link auf den Eintrag im TeutoNavigator — so, wie ihn der Gast sieht.
  *
  * Wertvoller als ein Backend-Link: der Gastronom kann ihn öffnen, und in der
- * Anfrage-Mail zeigt er unmittelbar, was auf dem Spiel steht. Bei leeren
- * `timeIntervals` steht dort nämlich **„immer geöffnet"** (geprüft am 31.08.2026 an
- * 100040904, 100031263, 100044621, 100022947, 100023478) — nicht etwa "keine Angabe".
+ * Anfrage-Mail zeigt er unmittelbar, was auf dem Spiel steht.
+ *
+ * ⚠️ KORRIGIERT am 09.09.2026. Hier stand: bei leeren `timeIntervals` erscheine
+ *    dort **„immer geöffnet"**, belegt an 100040904, 100031263, 100044621,
+ *    100022947, 100023478. Diese fünf zeigen es tatsächlich — aber sie waren
+ *    keine repräsentative Stichprobe. Nachgezählt an ALLEN 43 Gästeansichten
+ *    ohne strukturierte Zeiten:
+ *      12  zeigen „immer geöffnet"
+ *      31  zeigen gar keinen Öffnungszeiten-Abschnitt, oder nur den Freitext
+ *          (beim Restaurant Berghof eine Saison von 2016)
+ *    Aus der öffentlichen Schnittstelle ist NICHT vorhersagbar, welcher Fall
+ *    eintritt: Hof Bröker (100030633) zeigt „immer geöffnet" ohne jeden
+ *    Freitext, Landcafé Up n Roithen (100021594) zeigt es trotz Freitext und
+ *    ganzjähriger `seasons` nicht. Wer die Aussage braucht, muss die Seite
+ *    abrufen — nicht aus den Feldern schließen.
+ *    Und: unter den 12 sind Automaten und ein Autohof, wo „immer geöffnet"
+ *    vermutlich richtig ist. Die Angabe ist also nicht per se falsch.
  *
  * Der Slug im Pfad ist beliebig, darf aber nicht leer sein (leer ⇒ HTTP 404).
  */
